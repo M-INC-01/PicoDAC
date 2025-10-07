@@ -7,7 +7,8 @@ Autore: [Mattia / Mattimax](https://huggingface.co/Mattimax)
 Sito aziendale: [M.INC](https://sites.google.com/view/mattimax-site/home-page)
 
 ---
-
+![PicoDAC Logo](https://raw.githubusercontent.com/M-INC-01/PicoDAC/main/PicoDAC_Logo.png)
+---
 ## 1. Panoramica
 
 PicoDAC è un **modello GPT-like ultraleggero** ottimizzato per dialoghi in italiano, progettato per essere:
