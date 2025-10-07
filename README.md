@@ -215,11 +215,145 @@ print(tokenizer.decode(outputs[0]))
 
 ---
 
+# Layer & Parametri Dettagliati
+
+---
+
+## 1. Configurazione generale
+
+| Parametro   | Valore |
+| ----------- | ------ |
+| Vocabolario | 1920   |
+| d_model     | 240    |
+| n_layers    | 6      |
+| n_heads     | 6      |
+| d_head      | 40     |
+| d_ff        | 960    |
+| n_ctx       | 64     |
+| Dropout     | 0.0    |
+
+**Calcolo rapido dei parametri**:
+
+* Embedding token: `1920 × 240 = 460,800`
+* Positional embedding: `64 × 240 = 15,360`
+* RMSNorm (per layer, 2 per layer + finale): 240 × 3 = 720 × 6 = 4,320
+* Totale embedding + norm ≈ 480k
+
+---
+
+## 2. Parametri TransformerBlock (per blocco)
+
+### 2.1 Multi-Head Attention
+
+* Matrice QKV: `d_model × 3*d_model = 240 × 720 = 172,800`
+* Matrice output: `d_model × d_model = 240 × 240 = 57,600`
+* **Totale attenzione per blocco**: 230,400
+
+### 2.2 FeedForward
+
+* Linear1: `d_model × d_ff = 240 × 960 = 230,400`
+* Linear2: `d_ff × d_model = 960 × 240 = 230,400`
+* **Totale FFN per blocco**: 460,800
+
+### 2.3 RMSNorm
+
+* 2 RMSNorm per blocco × 240 param = 480
+
+**Parametri totali per blocco**:
+
+```
+Attention 230,400 + FFN 460,800 + RMSNorm 480 ≈ 691,680
+```
+
+**6 blocchi** → 4,150,080
+
+---
+
+## 3. Layer finale
+
+* RMSNorm finale: 240 param
+* LM head (weight sharing) → nessun parametro aggiuntivo
+
+---
+
+## 4. Parametri totali FP32
+
+| Componente           | Parametri           |
+| -------------------- | ------------------- |
+| Embedding + pos      | 476,160             |
+| 6 × TransformerBlock | 4,150,080           |
+| RMSNorm finale       | 240                 |
+| **Totale FP32**      | ≈ 4,626,480 (~4.6M) |
+
+> Nota: nel codice stimavo ~8M perché consideravo duplicazioni e buffer temporanei, ma i pesi effettivi sono ~4.6M.
+
+---
+
+## 5. Stima FLOPS per un forward
+
+**Assunzioni**:
+
+* Matmul FP32: `2 * M * N * K` FLOPS
+* Input batch size `B`, sequence length `T = n_ctx = 64`
+
+### 5.1 Embedding
+
+* `B × T × d_model` addizione pos embedding → FLOPS trascurabile
+
+### 5.2 Multi-Head Attention (per layer)
+
+* QKV matmul: `B*T*d_model × 3*d_model ≈ 3*B*T*240*240` → 3 × 64*B*240² ≈ 11,059,200 × B
+* Attn matmul: `B*H*T*d_head × T ≈ B*6*64*40*64 ≈ 983,040 × B`
+* Output linear: `B*T*d_model × d_model = 64*B*240*240 = 3,686,400 × B`
+
+**Totale per attenzione per batch B** ≈ 15.7M × B FLOPS
+
+### 5.3 FFN
+
+* Linear1 + activation + Linear2: `B*T*(d_model*d_ff*2) ≈ 64*B*(240*960*2) ≈ 29,491,200 × B`
+
+### 5.4 Totale per layer
+
+```
+Attention + FFN ≈ 15.7M + 29.5M ≈ 45.2M FLOPS × B
+6 layer → 271.2M FLOPS × B
++ embedding & norm → trascurabile
+```
+
+### 5.5 Per token
+
+* FLOPS per token ≈ 271.2M / (B*64) ≈ 4.24M FLOPS per token
+
+---
+
+## 6. Quantizzazione
+
+* **Matrici principali** → int8: 8 bit / 32 bit = ×4 riduzione memoria
+* **Embedding & RMSNorm** → 18/24 bit emulati in int32 → ~50-75% risparmio rispetto FP32
+* Risultato: modello quantizzato ≈ 1.5-2M param “equivalenti FP32”
+
+> Permette inferenze rapide su GPU consumer, notebook o CPU con memoria limitata.
+
+---
+
+## 7. Riassunto layer per layer
+
+| Layer      | QKV       | Output attn | FFN       | RMSNorm | Totale layer |
+| ---------- | --------- | ----------- | --------- | ------- | ------------ |
+| 1          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| 2          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| 3          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| 4          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| 5          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| 6          | 172,800   | 57,600      | 460,800   | 480     | 691,680      |
+| Finale     | –         | –           | –         | 240     | 240          |
+| **Totale** | 1,036,800 | 345,600     | 2,764,800 | 3,240   | 4,626,480    |
+
+---
+
 ## 7. Risorse e link
 
 * [PicoDAC](https://huggingface.co/Mattimax/PicoDAC)
 * [PicoDAC-IT](https://huggingface.co/Mattimax/PicoDAC-IT)
 * [M.INC HuggingFace](https://huggingface.co/MINC01)
 * [Sito aziendale](https://sites.google.com/view/mattimax-site/home-page)
-
-Vuoi che faccia anche quello?
